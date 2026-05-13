@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-BacGWAS-Visualizer (Fase 1: Motor de Magnitud)
+BacGWAS-Visualizer (Sprint 1 & 2: Magnitud, Mapeo y Clustering)
 Pipeline modular para el análisis y visualización de GWAS bacteriano.
 """
 
@@ -14,19 +14,24 @@ import seaborn as sns
 import os
 import gzip
 from matplotlib.lines import Line2D
+from Bio import SeqIO
+from Bio.Seq import Seq
 
 def parse_arguments():
-    parser = argparse.ArgumentParser(description="BacGWAS-Visualizer: Motor de cálculo de magnitud y gráficos.")
+    parser = argparse.ArgumentParser(description="BacGWAS-Visualizer: Motor de magnitud, mapeo y clustering.")
     
     # Inputs OBLIGATORIOS
     parser.add_argument('-v', '--vcf', required=True, help="Archivo VCF de entrada (.vcf o .vcf.gz).")
     parser.add_argument('-p', '--pheno', required=True, help="Archivo de fenotipos (.txt). Formato: ID  Fenotipo (1/0).")
-    parser.add_argument('-g', '--gwas', required=True, help="Output del GWAS de Pyseer (.tsv).")
+    parser.add_argument('-g', '--gwas', required=True, help="Output del GWAS de Pyseer (.tsv completo).")
+    
+    # Inputs OPCIONALES (Para el Sprint 2)
+    parser.add_argument('-r', '--ref', required=False, help="Genoma/Gen de referencia (.fasta) para mapear y agrupar unitigs.")
     
     # Parámetros CUSTOMIZABLES
-    parser.add_argument('-t', '--type', choices=['snp', 'unitig', 'kmer'], default='unitig', help="Tipo de variante (afecta los títulos).")
-    parser.add_argument('-c', '--case-name', default="Casos (1)", help="Etiqueta para fenotipo 1 (Ej. GC)")
-    parser.add_argument('-n', '--control-name', default="Controles (0)", help="Etiqueta para fenotipo 0 (Ej. NAG)")
+    parser.add_argument('-t', '--type', choices=['snp', 'unitig', 'kmer'], default='unitig', help="Tipo de variante.")
+    parser.add_argument('-c', '--case-name', default="Casos (1)", help="Etiqueta para fenotipo 1")
+    parser.add_argument('-n', '--control-name', default="Controles (0)", help="Etiqueta para fenotipo 0")
     
     # Outputs y Filtros
     parser.add_argument('-o', '--outdir', default="BacGWAS_Output", help="Carpeta de salida.")
@@ -35,7 +40,7 @@ def parse_arguments():
     return parser.parse_args()
 
 def load_phenotypes(pheno_file):
-    print(">>> [1/5] Cargando y limpiando metadatos fenotípicos...")
+    print("\n>>> [1/5] Cargando y limpiando metadatos fenotípicos...")
     try:
         df_pheno = pd.read_csv(pheno_file, sep=r'\s+', header=None)
         if isinstance(df_pheno.iloc[0, 1], str) and not df_pheno.iloc[0, 1].replace('.', '', 1).isdigit():
@@ -63,8 +68,6 @@ def process_vcf(vcf_file, casos_ids, controles_ids):
     with open_func(vcf_file, 'rt') as f:
         for line in f:
             if line.startswith('##'): continue
-            
-            # Mapear columnas a cepas
             if line.startswith('#CHROM'):
                 samples = line.strip().split('\t')[9:]
                 for idx, sample in enumerate(samples):
@@ -73,7 +76,6 @@ def process_vcf(vcf_file, casos_ids, controles_ids):
                 print(f"    ✔️ Columnas VCF emparejadas con éxito.")
                 continue
             
-            # Conteo súper rápido por fila
             parts = line.strip().split('\t')
             var_id = parts[2]
             if var_id == '.': var_id = f"{parts[0]}_{parts[1]}" 
@@ -101,7 +103,6 @@ def generar_graficos(df_plot, args):
     
     plt.figure(figsize=(13, 8))
     sns.regplot(data=df_plot, x='abs_delta_freq', y='log10_p', scatter=False, color='gray', line_kws={'linestyle':'-.', 'linewidth': 1.5, 'alpha': 0.6})
-    
     scatter = sns.scatterplot(data=df_plot, x='abs_delta_freq', y='log10_p', size='af', sizes=(20, 300), hue='Grupo Dominante', palette=paleta, alpha=0.7, edgecolor='black', linewidth=0.4)
     
     plt.axvline(0, color='black', linewidth=1.5)
@@ -121,6 +122,83 @@ def generar_graficos(df_plot, args):
     plt.savefig(os.path.join(args.outdir, "Plot_Magnitud_Absoluta.png"), dpi=300, bbox_inches='tight')
     plt.close()
 
+# ==========================================
+# 🗺️ MÓDULO SPRINT 2: MAPEO Y CLUSTERING
+# ==========================================
+def mapear_y_agrupar_unitigs(df_hits, ref_file, outdir):
+    print("\n>>> [5/5] Iniciando Mapeo Espacial y Clustering...")
+    try:
+        ref_record = next(SeqIO.parse(ref_file, "fasta"))
+        ref_seq = str(ref_record.seq).upper()
+        print(f"    ✔️ Referencia cargada: {ref_record.id} ({len(ref_seq)} pb)")
+    except Exception as e:
+        print(f"    ❌ ERROR leyendo el FASTA de referencia: {e}")
+        return
+
+    # 1. Mapeo Bidireccional
+    print("    ⏳ Mapeando hits en la secuencia...")
+    mapeados = []
+    for _, row in df_hits.iterrows():
+        unitig = row['variant'].upper()
+        
+        # Intento Forward
+        pos = ref_seq.find(unitig)
+        strand = '+'
+        
+        # Intento Reverse Complement
+        if pos == -1:
+            unitig_rc = str(Seq(unitig).reverse_complement())
+            pos = ref_seq.find(unitig_rc)
+            strand = '-'
+            
+        if pos != -1:
+            mapeados.append({
+                'variant': unitig,
+                'start': pos + 1,  # Biología usa base 1 (no base 0 como Python)
+                'end': pos + len(unitig),
+                'strand': strand,
+                'pvalue': row['lrt-pvalue'],
+                'grupo': row['Grupo Dominante']
+            })
+            
+    df_map = pd.DataFrame(mapeados)
+    if df_map.empty:
+        print("    ⚠️ Ningún hit mapeó en esta referencia. Revisa si es la correcta.")
+        return
+        
+    print(f"    ✔️ {len(df_map)}/{len(df_hits)} hits encontrados en la referencia.")
+    df_map.to_csv(os.path.join(outdir, "Hits_Mapeados_Detalle.csv"), index=False)
+
+    # 2. Clustering (Fusión de Intervalos superpuestos)
+    print("    ⏳ Agrupando hits encimados en Regiones de Interés (ROIs)...")
+    df_map = df_map.sort_values('start').reset_index(drop=True)
+    
+    rois = []
+    current_roi = None
+    
+    for _, row in df_map.iterrows():
+        if current_roi is None:
+            current_roi = {'start': row['start'], 'end': row['end'], 'hits_contenidos': 1}
+        else:
+            # Si el inicio de este unitig cae "dentro" o "pegado" al anterior (margen de 5 bases)
+            if row['start'] <= current_roi['end'] + 5:
+                current_roi['end'] = max(current_roi['end'], row['end']) # Expandir la burbuja
+                current_roi['hits_contenidos'] += 1
+            else:
+                rois.append(current_roi) # Guardar ROI completada
+                current_roi = {'start': row['start'], 'end': row['end'], 'hits_contenidos': 1} # Empezar nueva
+                
+    if current_roi: rois.append(current_roi) # Guardar la última
+        
+    df_rois = pd.DataFrame(rois)
+    df_rois.index = [f"ROI_{i+1}" for i in range(len(df_rois))]
+    df_rois.index.name = "ID_Region"
+    
+    ruta_rois = os.path.join(outdir, "ROIs_para_R.csv")
+    df_rois.to_csv(ruta_rois)
+    print(f"    ✨ Clustering exitoso: Se crearon {len(df_rois)} Regiones de Interés.")
+    print(f"    📄 Archivo puente para R listo: {ruta_rois}")
+
 def main():
     args = parse_arguments()
     if not os.path.exists(args.outdir): os.makedirs(args.outdir)
@@ -131,52 +209,40 @@ def main():
     print(">>> [3/5] Integrando datos con estadísticas GWAS...")
     try:
         df_gwas = pd.read_csv(args.gwas, sep="\t")
+        df_gwas = df_gwas.dropna(subset=['variant'])
         df_gwas['variant'] = df_gwas['variant'].astype(str).str.strip()
         df_vcf_freqs['variant'] = df_vcf_freqs['variant'].astype(str).str.strip()
         
-        # --- RAYOS X: ¿QUÉ ESTÁ LEYENDO PYTHON? ---
-        print(f"    🔍 Total filas en GWAS: {len(df_gwas)}")
-        print(f"    🔍 Total filas en VCF: {len(df_vcf_freqs)}")
-        
-        if len(df_gwas) > 0: 
-            print(f"    🔍 Ejemplo ID GWAS (Pyseer): '{df_gwas['variant'].iloc[0]}'")
-        if len(df_vcf_freqs) > 0: 
-            print(f"    🔍 Ejemplo ID VCF: '{df_vcf_freqs['variant'].iloc[0]}'")
-            
         df_plot = pd.merge(df_gwas, df_vcf_freqs, on='variant', how='inner')
-        print(f"    ✔️ Variantes que SÍ coincidieron: {len(df_plot)}")
-        
         if df_plot.empty:
-            print("\n    ❌ ERROR: El cruce dio 0 resultados. Los IDs no coinciden.")
+            print("\n    ❌ ERROR: El cruce dio 0 resultados. Revisa tus archivos.")
             exit(1)
-            
     except Exception as e:
         print(f"❌ ERROR cruzando archivos: {e}")
         exit(1)
 
     df_plot['log10_p'] = -np.log10(df_plot['lrt-pvalue'])
     df_plot['Grupo Dominante'] = np.where(df_plot['delta_freq'] > 0, args.case_name, args.control_name)
-    df_plot = df_plot.sample(frac=1, random_state=42).reset_index(drop=True) # Mezclar puntos
-    
+    df_plot = df_plot.sample(frac=1, random_state=42).reset_index(drop=True)
     df_plot.to_csv(os.path.join(args.outdir, "GWAS_Matriz_Integrada.csv"), index=False)
     
     generar_graficos(df_plot, args)
     
-    # ==========================================
-    # 🚀 EL PUENTE HACIA EL SPRINT 2
-    # ==========================================
-    print(">>> [5/5] Preparando hand-off para el Módulo de Mapeo...")
     df_sig = df_plot[df_plot['lrt-pvalue'] < args.pval].copy()
-    
     if not df_sig.empty:
         ruta_hits = os.path.join(args.outdir, "HITS_SIGNIFICATIVOS.csv")
         df_sig.to_csv(ruta_hits, index=False)
         print(f"    ✔️ {len(df_sig)} hits superaron el umbral (p < {args.pval}).")
-        print(f"    ✔️ Guardados en: {ruta_hits}")
+        
+        # --- ACTIVADOR DEL SPRINT 2 ---
+        if args.ref:
+            mapear_y_agrupar_unitigs(df_sig, args.ref, args.outdir)
+        else:
+            print("\n>>> [5/5] Mapeo Omitido (No se proporcionó --ref).")
     else:
         print(f"    ⚠️ Ningún variante superó el umbral (p < {args.pval}).")
 
-    print("\n✨ ¡Fase 1 completada con éxito! Revisa tu carpeta de salida.")
+    print("\n🚀 ¡Pipeline ejecutado exitosamente!")
 
 if __name__ == "__main__":
     main()
