@@ -97,7 +97,7 @@ def process_vcf(vcf_file, casos_ids, controles_ids):
 def generar_graficos(df_plot, args):
     print(">>> [4/5] Renderizando gráficos de alta resolución...")
     paleta = {args.case_name: '#d63031', args.control_name: '#0984e3'}
-    titulo_eje = f"Cambio de la variante (|$\Delta$ Frecuencia|)"
+    titulo_eje = fr"Cambio de la variante (|$\Delta$ Frecuencia|)"
     
     plt.figure(figsize=(13, 8))
     sns.regplot(data=df_plot, x='abs_delta_freq', y='log10_p', scatter=False, color='gray', line_kws={'linestyle':'-.', 'linewidth': 1.5, 'alpha': 0.6})
@@ -131,7 +131,25 @@ def main():
     print(">>> [3/5] Integrando datos con estadísticas GWAS...")
     try:
         df_gwas = pd.read_csv(args.gwas, sep="\t")
+        df_gwas['variant'] = df_gwas['variant'].astype(str).str.strip()
+        df_vcf_freqs['variant'] = df_vcf_freqs['variant'].astype(str).str.strip()
+        
+        # --- RAYOS X: ¿QUÉ ESTÁ LEYENDO PYTHON? ---
+        print(f"    🔍 Total filas en GWAS: {len(df_gwas)}")
+        print(f"    🔍 Total filas en VCF: {len(df_vcf_freqs)}")
+        
+        if len(df_gwas) > 0: 
+            print(f"    🔍 Ejemplo ID GWAS (Pyseer): '{df_gwas['variant'].iloc[0]}'")
+        if len(df_vcf_freqs) > 0: 
+            print(f"    🔍 Ejemplo ID VCF: '{df_vcf_freqs['variant'].iloc[0]}'")
+            
         df_plot = pd.merge(df_gwas, df_vcf_freqs, on='variant', how='inner')
+        print(f"    ✔️ Variantes que SÍ coincidieron: {len(df_plot)}")
+        
+        if df_plot.empty:
+            print("\n    ❌ ERROR: El cruce dio 0 resultados. Los IDs no coinciden.")
+            exit(1)
+            
     except Exception as e:
         print(f"❌ ERROR cruzando archivos: {e}")
         exit(1)
