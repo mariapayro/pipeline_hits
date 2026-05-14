@@ -3,7 +3,7 @@
 
 """
 BacGWAS-Visualizer (Sprint 1 & 2: Magnitud, Mapeo y Clustering)
-Pipeline modular para el análisis y visualización de GWAS bacteriano.
+Pipeline for Allele Frequency Analysis for Bacterial GWAS.
 """
 
 import argparse
