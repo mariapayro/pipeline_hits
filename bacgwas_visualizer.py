@@ -206,17 +206,14 @@ def main():
     casos_ids, controles_ids = load_phenotypes(args.pheno)
     df_vcf_freqs = process_vcf(args.vcf, casos_ids, controles_ids)
     
-    
     print(">>> [3/5] Integrando datos con estadísticas GWAS...")
     try:
         df_gwas = pd.read_csv(args.gwas, sep="\t")
         
-        # Sistema de auto-detección de columna "variant"
         columnas_gwas = df_gwas.columns.tolist()
         col_buscada = 'variant'
         
         if col_buscada not in columnas_gwas:
-            # Busca si existe la palabra "variant" pero escrita con mayúsculas/minúsculas
             encontrada = False
             for col in columnas_gwas:
                 if col.strip().lower() == col_buscada:
@@ -225,22 +222,34 @@ def main():
                     encontrada = True
                     break
             
-            # Si de plano no se llama variant (ej. se llama ID o KMER)
             if not encontrada:
-                print(f"    ⚠️ No se encontró '{col_buscada}'. Detectadas: {columnas_gwas}")
                 primera_col = columnas_gwas[0]
                 df_gwas.rename(columns={primera_col: col_buscada}, inplace=True)
                 print(f"    ✔️ Usando la primera columna '{primera_col}' como ID de variante.")
         
-        # Continuamos con la limpieza normal
         df_gwas = df_gwas.dropna(subset=['variant'])
-        df_gwas['variant'] = df_gwas['variant'].astype(str).str.strip()
+        
+        # --- NUEVO: Limpieza Quirúrgica de IDs ---
+        # El VCF tiene '26695_1319583', pero Pyseer tiene '26695_1319583_A_T'.
+        # Esta función corta todo lo que esté después del segundo guion bajo '_'
+        def limpiar_id_pyseer(id_sucio):
+            partes = str(id_sucio).strip().split('_')
+            # Si tiene más de 2 partes (ej. Chrom_Pos_Ref_Alt), nos quedamos solo con las 2 primeras
+            if len(partes) >= 2:
+                return f"{partes[0]}_{partes[1]}"
+            return str(id_sucio).strip()
+
+        df_gwas['variant'] = df_gwas['variant'].apply(limpiar_id_pyseer)
         df_vcf_freqs['variant'] = df_vcf_freqs['variant'].astype(str).str.strip()
         
         df_plot = pd.merge(df_gwas, df_vcf_freqs, on='variant', how='inner')
         if df_plot.empty:
-            print("\n    ❌ ERROR: El cruce dio 0 resultados. Revisa tus archivos.")
+            print("\n    ❌ ERROR: El cruce dio 0 resultados.")
+            print(f"    🔍 Ejemplo GWAS: '{df_gwas['variant'].iloc[0]}' | Ejemplo VCF: '{df_vcf_freqs['variant'].iloc[0]}'")
             exit(1)
+            
+        print(f"    ✔️ ¡Cruce exitoso! {len(df_plot)} variantes emparejadas.")
+        
     except Exception as e:
         print(f"❌ ERROR cruzando archivos: {e}")
         exit(1)
