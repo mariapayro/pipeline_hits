@@ -96,15 +96,30 @@ def process_vcf(vcf_file, casos_ids, controles_ids):
             })
             
     return pd.DataFrame(resultados)
-
+    
+    
 def generar_graficos(df_plot, args):
     print(">>> [4/5] Renderizando gráficos de alta resolución...")
     paleta = {args.case_name: '#d63031', args.control_name: '#0984e3'}
     titulo_eje = fr"Cambio de la variante (|$\Delta$ Frecuencia|)"
     
+    # Auto-detectar la columna de Frecuencia Alélica (af o AF)
+    col_af = 'af'
+    if 'AF' in df_plot.columns:
+        col_af = 'AF'
+    elif 'Af' in df_plot.columns:
+        col_af = 'Af'
+        
+    # Si de plano no existe, creamos una constante para que no crashee
+    if col_af not in df_plot.columns:
+        df_plot['af_dummy'] = 0.5
+        col_af = 'af_dummy'
+    
     plt.figure(figsize=(13, 8))
     sns.regplot(data=df_plot, x='abs_delta_freq', y='log10_p', scatter=False, color='gray', line_kws={'linestyle':'-.', 'linewidth': 1.5, 'alpha': 0.6})
-    scatter = sns.scatterplot(data=df_plot, x='abs_delta_freq', y='log10_p', size='af', sizes=(20, 300), hue='Grupo Dominante', palette=paleta, alpha=0.7, edgecolor='black', linewidth=0.4)
+    
+    # Aquí usamos la variable dinámica col_af
+    scatter = sns.scatterplot(data=df_plot, x='abs_delta_freq', y='log10_p', size=col_af, sizes=(20, 300), hue='Grupo Dominante', palette=paleta, alpha=0.7, edgecolor='black', linewidth=0.4)
     
     plt.axvline(0, color='black', linewidth=1.5)
     plt.axhline(-np.log10(args.pval), color='black', linestyle='--', linewidth=1.5)
@@ -265,7 +280,7 @@ def main():
         
         # El script de R sí necesita el FASTA para dibujar los logos de secuencia
         if args.ref:
-            comando_r = ["Rscript", "generar_paisaje_logos.R", ruta_matriz, ruta_rois, args.ref, args.outdir]
+            comando_r = ["Rscript", "allele_landscape_logo.R", ruta_matriz, ruta_rois, args.ref, args.outdir]
             try:
                 print(f"    ⏳ Ejecutando Rscript...")
                 subprocess.run(comando_r, check=True, capture_output=True, text=True)
