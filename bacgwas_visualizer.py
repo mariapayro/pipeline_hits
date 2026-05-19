@@ -123,73 +123,55 @@ def generar_graficos(df_plot, args):
     plt.savefig(os.path.join(args.outdir, "Plot_Magnitud_Absoluta.png"), dpi=300, bbox_inches='tight')
     plt.close()
 
+
 # ==========================================
-# 🗺️ MÓDULO SPRINT 2: MAPEO Y CLUSTERING
+# 🗺️ MÓDULO SPRINT 2: CLUSTERING (COBRANDO COORDENADAS PRE-MAPEADAS)
 # ==========================================
-def mapear_y_agrupar_unitigs(df_hits, ref_file, outdir):
-    print("\n>>> [5/5] Iniciando Mapeo Espacial y Clustering...")
-    try:
-        ref_record = next(SeqIO.parse(ref_file, "fasta"))
-        ref_seq = str(ref_record.seq).upper()
-        print(f"    ✔️ Referencia cargada: {ref_record.id} ({len(ref_seq)} pb)")
-    except Exception as e:
-        print(f"    ❌ ERROR leyendo el FASTA de referencia: {e}")
+def mapear_y_agrupar_unitigs(df_hits, outdir):
+    print("\n>>> [5/6] Iniciando Clustering de Coordenadas Pre-mapeadas...")
+    
+    # Verificar si las columnas START y END existen (usando auto-detección por si hay mayúsculas)
+    columnas = [c.upper() for c in df_hits.columns]
+    
+    if 'START' not in columnas or 'END' not in columnas:
+        print("    ⚠️ No se encontraron columnas START/END en el GWAS. No se pueden crear ROIs.")
         return
 
-    # 1. Mapeo Bidireccional
-    print("    ⏳ Mapeando hits en la secuencia...")
-    mapeados = []
-    for _, row in df_hits.iterrows():
-        unitig = row['variant'].upper()
-        
-        # Intento Forward
-        pos = ref_seq.find(unitig)
-        strand = '+'
-        
-        # Intento Reverse Complement
-        if pos == -1:
-            unitig_rc = str(Seq(unitig).reverse_complement())
-            pos = ref_seq.find(unitig_rc)
-            strand = '-'
-            
-        if pos != -1:
-            mapeados.append({
-                'variant': unitig,
-                'start': pos + 1,  # Biología usa base 1 (no base 0 como Python)
-                'end': pos + len(unitig),
-                'strand': strand,
-                'pvalue': row['lrt-pvalue'],
-                'grupo': row['Grupo Dominante']
-            })
-            
-    df_map = pd.DataFrame(mapeados)
+    # Estandarizar nombres temporalmente para manipularlos
+    df_hits = df_hits.copy()
+    df_hits.columns = [c.upper() for c in df_hits.columns]
+    
+    # Extraer las coordenadas y asegurar que sean números
+    df_hits['START'] = pd.to_numeric(df_hits['START'], errors='coerce')
+    df_hits['END'] = pd.to_numeric(df_hits['END'], errors='coerce')
+    df_map = df_hits.dropna(subset=['START', 'END']).copy()
+    
     if df_map.empty:
-        print("    ⚠️ Ningún hit mapeó en esta referencia. Revisa si es la correcta.")
+        print("    ⚠️ Las coordenadas estaban vacías. No se pueden crear ROIs.")
         return
-        
-    print(f"    ✔️ {len(df_map)}/{len(df_hits)} hits encontrados en la referencia.")
-    df_map.to_csv(os.path.join(outdir, "Hits_Mapeados_Detalle.csv"), index=False)
 
-    # 2. Clustering (Fusión de Intervalos superpuestos)
+    print(f"    ✔️ Extrayendo {len(df_map)} coordenadas listas...")
+
+    # Clustering (Fusión de Intervalos superpuestos)
     print("    ⏳ Agrupando hits encimados en Regiones de Interés (ROIs)...")
-    df_map = df_map.sort_values('start').reset_index(drop=True)
+    df_map = df_map.sort_values('START').reset_index(drop=True)
     
     rois = []
     current_roi = None
     
     for _, row in df_map.iterrows():
         if current_roi is None:
-            current_roi = {'start': row['start'], 'end': row['end'], 'hits_contenidos': 1}
+            current_roi = {'start': row['START'], 'end': row['END'], 'hits_contenidos': 1}
         else:
             # Si el inicio de este unitig cae "dentro" o "pegado" al anterior (margen de 5 bases)
-            if row['start'] <= current_roi['end'] + 5:
-                current_roi['end'] = max(current_roi['end'], row['end']) # Expandir la burbuja
+            if row['START'] <= current_roi['end'] + 5:
+                current_roi['end'] = max(current_roi['end'], row['END'])
                 current_roi['hits_contenidos'] += 1
             else:
-                rois.append(current_roi) # Guardar ROI completada
-                current_roi = {'start': row['start'], 'end': row['end'], 'hits_contenidos': 1} # Empezar nueva
+                rois.append(current_roi)
+                current_roi = {'start': row['START'], 'end': row['END'], 'hits_contenidos': 1}
                 
-    if current_roi: rois.append(current_roi) # Guardar la última
+    if current_roi: rois.append(current_roi)
         
     df_rois = pd.DataFrame(rois)
     df_rois.index = [f"ROI_{i+1}" for i in range(len(df_rois))]
@@ -198,6 +180,7 @@ def mapear_y_agrupar_unitigs(df_hits, ref_file, outdir):
     ruta_rois = os.path.join(outdir, "ROIs_para_R.csv")
     df_rois.to_csv(ruta_rois)
     print(f"    ✨ Clustering exitoso: Se crearon {len(df_rois)} Regiones de Interés.")
+    
     print(f"    📄 Archivo puente para R listo: {ruta_rois}")
 
 def main():
