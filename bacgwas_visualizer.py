@@ -77,7 +77,7 @@ def process_vcf(vcf_file, casos_ids, controles_ids):
                 continue
             
             parts = line.strip().split('\t')
-            var_id = parts[2]
+            var_id = f"{parts[0]}_{parts[1]}"  # Forzamos a usar Cromosoma_Posición en lugar de la secuencia para hacer match con Pyseer
             if var_id == '.': var_id = f"{parts[0]}_{parts[1]}" 
             
             conteo_casos = sum(1 for i in casos_indices if '1' in parts[i].split(':')[0])
