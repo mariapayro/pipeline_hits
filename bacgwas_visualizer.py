@@ -255,35 +255,25 @@ def main():
         
         
         # --- ACTIVADOR DEL SPRINT 2 Y 3 ---
+        # Fase 2: Mapeo y ROIs (Python extrae directo de la tabla)
+        mapear_y_agrupar_unitigs(df_sig, args.outdir)
+        
+        # Fase 3: Renderizado de Paisaje y Logos (R)
+        print("\n>>> [6/6] Lanzando Motor Gráfico de R...")
+        ruta_matriz = os.path.join(args.outdir, "GWAS_Matriz_Integrada.csv")
+        ruta_rois = os.path.join(args.outdir, "ROIs_para_R.csv")
+        
+        # El script de R sí necesita el FASTA para dibujar los logos de secuencia
         if args.ref:
-            # Fase 2: Mapeo y ROIs (Python)
-            mapear_y_agrupar_unitigs(df_sig, args.ref, args.outdir)
-            
-            # Fase 3: Renderizado de Paisaje y Logos (R)
-            print("\n>>> [6/6] Lanzando Motor Gráfico de R...")
-            ruta_matriz = os.path.join(args.outdir, "GWAS_Matriz_Integrada.csv")
-            ruta_rois = os.path.join(args.outdir, "ROIs_para_R.csv")
-            
-            # Construimos el comando dinámico
-            comando_r = [
-                "Rscript", 
-                "generar_paisaje_logos.R", # El script de R debe estar en la misma carpeta que este script de Python
-                ruta_matriz, 
-                ruta_rois, 
-                args.ref, 
-                args.outdir
-            ]
-            
+            comando_r = ["Rscript", "generar_paisaje_logos.R", ruta_matriz, ruta_rois, args.ref, args.outdir]
             try:
                 print(f"    ⏳ Ejecutando Rscript...")
-                # Corremos R silenciosamente y capturamos errores si los hay
                 subprocess.run(comando_r, check=True, capture_output=True, text=True)
                 print(f"    ✔️ ¡Paisaje y Logos diferenciales generados exitosamente!")
             except subprocess.CalledProcessError as e:
                 print(f"    ❌ ERROR en el motor de R. Detalle del error de R:\n{e.stderr}")
-                
         else:
-            print("\n>>> [5/5] Mapeo Omitido (No se proporcionó --ref).")
+            print("    ⚠️ Se omitió el gráfico de R porque no se proporcionó un FASTA de referencia (--ref).")
             
 
     else:
