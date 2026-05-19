@@ -206,9 +206,33 @@ def main():
     casos_ids, controles_ids = load_phenotypes(args.pheno)
     df_vcf_freqs = process_vcf(args.vcf, casos_ids, controles_ids)
     
+    
     print(">>> [3/5] Integrando datos con estadísticas GWAS...")
     try:
         df_gwas = pd.read_csv(args.gwas, sep="\t")
+        
+        # Sistema de auto-detección de columna "variant"
+        columnas_gwas = df_gwas.columns.tolist()
+        col_buscada = 'variant'
+        
+        if col_buscada not in columnas_gwas:
+            # Busca si existe la palabra "variant" pero escrita con mayúsculas/minúsculas
+            encontrada = False
+            for col in columnas_gwas:
+                if col.strip().lower() == col_buscada:
+                    df_gwas.rename(columns={col: col_buscada}, inplace=True)
+                    print(f"    ✔️ Columna '{col}' estandarizada a '{col_buscada}'.")
+                    encontrada = True
+                    break
+            
+            # Si de plano no se llama variant (ej. se llama ID o KMER)
+            if not encontrada:
+                print(f"    ⚠️ No se encontró '{col_buscada}'. Detectadas: {columnas_gwas}")
+                primera_col = columnas_gwas[0]
+                df_gwas.rename(columns={primera_col: col_buscada}, inplace=True)
+                print(f"    ✔️ Usando la primera columna '{primera_col}' como ID de variante.")
+        
+        # Continuamos con la limpieza normal
         df_gwas = df_gwas.dropna(subset=['variant'])
         df_gwas['variant'] = df_gwas['variant'].astype(str).str.strip()
         df_vcf_freqs['variant'] = df_vcf_freqs['variant'].astype(str).str.strip()
