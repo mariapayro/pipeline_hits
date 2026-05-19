@@ -245,14 +245,16 @@ def main():
         print(f"❌ ERROR cruzando archivos: {e}")
         exit(1)
 
-    df_plot['log10_p'] = -np.log10(df_plot['lrt-pvalue'])
+    df_plot['log10_p'] = -np.log10(df_plot['P'])
+#    df_plot['log10_p'] = -np.log10(df_plot['lrt-pvalue']) # si se llama lrt-pvalue
     df_plot['Grupo Dominante'] = np.where(df_plot['delta_freq'] > 0, args.case_name, args.control_name)
     df_plot = df_plot.sample(frac=1, random_state=42).reset_index(drop=True)
     df_plot.to_csv(os.path.join(args.outdir, "GWAS_Matriz_Integrada.csv"), index=False)
     
     generar_graficos(df_plot, args)
     
-    df_sig = df_plot[df_plot['lrt-pvalue'] < args.pval].copy()
+    df_sig = df_plot[df_plot['P'] < args.pval].copy()
+    #df_sig = df_plot[df_plot['lrt-pvalue'] < args.pval].copy() # si se llama lrt-pvalue
     if not df_sig.empty:
         ruta_hits = os.path.join(args.outdir, "HITS_SIGNIFICATIVOS.csv")
         df_sig.to_csv(ruta_hits, index=False)
