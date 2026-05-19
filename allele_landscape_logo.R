@@ -1,24 +1,20 @@
 #!/usr/bin/env Rscript
+# =============================================================================
+# Motor de Renderizado R (BacGWAS-Visualizer)
+# Construye dinámicamente matrices de ggseqlogo a partir de hits de GWAS
+# =============================================================================
 
-# ==========================================
-# BacGWAS-Visualizer (Sprint 3: Módulo de Renderizado en R)
-# This script is automatically called by bacwas_visualizer.py.
-# It generates the Genetic Landscape and Differential logos graphics.
-# ==========================================
-
-# 1. Cargar librerías silenciosamente
 suppressPackageStartupMessages({
   library(ggplot2)
   library(dplyr)
   library(patchwork)
+  library(ggseqlogo)
   library(Biostrings)
-  # library(ggseqlogo) # Descomentar si usas ggseqlogo para tus matrices
 })
 
-# 2. Capturar argumentos desde la terminal (Enviados por Python)
 args <- commandArgs(trailingOnly = TRUE)
 if (length(args) < 4) {
-  stop("Faltan argumentos. Uso: Rscript generar_paisaje_logos.R <matriz_integrada.csv> <rois.csv> <fasta_referencia> <outdir>", call.=FALSE)
+  stop("Faltan argumentos. Uso: Rscript allele_landscape_logo.R <matriz.csv> <rois.csv> <fasta> <outdir>", call.=FALSE)
 }
 
 archivo_matriz <- args[1]
@@ -28,81 +24,128 @@ outdir         <- args[4]
 
 cat("\n[R-Script] Iniciando renderizado del Paisaje Genético y Logos...\n")
 
-# 3. Cargar Datos
-df_matriz <- read.csv(archivo_matriz)
-df_rois   <- read.csv(archivo_rois)
-referencia <- readDNAStringSet(archivo_ref)
-secuencia_ref <- as.character(referencia[[1]])
+df_matriz <- read.csv(archivo_matriz, check.names = FALSE)
+df_rois   <- read.csv(archivo_rois, check.names = FALSE)
 
-# Nota de diseño: Para que el paisaje (línea azul) se dibuje correctamente a lo largo de 
-# todo el gen, df_matriz necesita tener una columna de 'coordenada_x'. 
-# (Asumiremos que tu script de Python mapea todos los unitigs, o que tienes una lógica 
-# para asignar el eje X en el paisaje).
+# Asegurarnos de que las columnas están en mayúsculas para evitar errores
+names(df_matriz) <- toupper(names(df_matriz))
+names(df_rois) <- tolower(names(df_rois))
 
 # ==========================================
-# 📊 GRÁFICO A: EL PAISAJE COMPLETO
+# 📈 PANEL A: PAISAJE GENÓMICO GLOBAL
 # ==========================================
 cat("[R-Script] Dibujando Paisaje Diferencial...\n")
 
-# Recreando la estética de tu imagen original
-plot_paisaje <- ggplot() +
-  # Aquí iría tu geom_line o geom_segment con los datos de df_matriz
-  # geom_line(data = df_matriz, aes(x = posicion, y = delta_freq), color = "steelblue") +
-  geom_hline(yintercept = 0, color = "black", size = 0.8) +
-  
-  # Dibujar dinámicamente las bandas amarillas basadas en las ROIs
+p_global <- ggplot(df_matriz, aes(x = START, y = DELTA_FREQ)) +
+  # Sombreado amarillo dinámico para todas las ROIs detectadas
   geom_rect(data = df_rois, 
             aes(xmin = start, xmax = end, ymin = -Inf, ymax = Inf),
-            fill = "gold", alpha = 0.4) +
+            fill = "#FFF200", alpha = 0.5, inherit.aes = FALSE) +
+  
+  geom_hline(yintercept = 0, color = "black", linewidth = 0.8) +
+  # Usamos geom_segment (tipo Manhattan) porque son mutaciones puntuales/kmers
+  geom_segment(aes(xend = START, yend = 0), color = "steelblue", linewidth = 0.6) +
   
   theme_classic() +
-  labs(title = "A) Paisaje Diferencial", x = "", y = "GC (+) . Frecuencia . NAG (-)") +
-  theme(plot.title = element_text(face = "bold", size = 14))
+  labs(
+    title = "A) Paisaje Diferencial Global de Variantes",
+    x = "", 
+    y = "Δ Frecuencia\nNAG (-)                      GC (+)"
+  ) +
+  coord_cartesian(ylim = c(-0.5, 0.5)) +
+  theme(
+    plot.title = element_text(face = "bold", size = 16),
+    axis.title = element_text(face = "bold", size = 12),
+    axis.line = element_line(color = "black", linewidth = 0.5)
+  )
 
 # ==========================================
-# 🧬 GRÁFICO B: GENERACIÓN DINÁMICA DE LOGOS
+# 🧬 PANEL B: CONSTRUCCIÓN DINÁMICA DE LOGOS
 # ==========================================
 cat(sprintf("[R-Script] Procesando %d Regiones de Interés (ROIs) para logos...\n", nrow(df_rois)))
+
+paleta_adn <- make_col_scheme(
+  chars  = c('A', 'C', 'G', 'T', '-'),
+  groups = c('A', 'C', 'G', 'T', '-'),
+  cols   = c('#109648', '#255C99', '#F7B32B', '#D62839', 'grey50')
+)
 
 lista_logos <- list()
 
 for (i in 1:nrow(df_rois)) {
-  roi_start <- df_rois$start[i]
-  roi_end   <- df_rois$end[i]
+  # Extraemos coordenadas y le damos un "colchón" de 2 bases para que se vea más bonito
+  roi_start <- df_rois$start[i] - 2
+  roi_end   <- df_rois$end[i] + 2
+  longitud  <- roi_end - roi_start + 1
   
-  # Extraer la secuencia específica de la región desde el FASTA
-  secuencia_roi <- substr(secuencia_ref, roi_start, roi_end)
+  # 1. Crear matriz vacía para ggseqlogo
+  mat_zoom <- matrix(0, nrow = 5, ncol = longitud)
+  rownames(mat_zoom) <- c('A', 'C', 'G', 'T', '-')
+  colnames(mat_zoom) <- as.character(roi_start:roi_end)
   
-  # -----------------------------------------------------
-  # AQUÍ INSERTAS TU CÓDIGO ORIGINAL DEL LOGO DIFFERENCIAL
-  # -----------------------------------------------------
-  # Ejemplo conceptual de cómo envolverlo en un plot de ggplot:
+  # 2. Filtrar mutaciones que caen en esta ROI
+  df_roi <- df_matriz %>% filter(START >= roi_start & START <= roi_end)
   
-  plot_logo <- ggplot() + 
-    annotate("text", x = 0.5, y = 0.5, 
-             label = paste("Logo ROI", i, "\n", roi_start, "-", roi_end), size = 6) +
-    theme_void() +
-    labs(title = sprintf("Detalle ROI %d (%d - %d)", i, roi_start, roi_end)) +
-    theme(plot.title = element_text(face = "bold", size = 10, hjust = 0.5))
+  # 3. Rellenar la matriz interpretando la mutación (Ej. A>T)
+  if(nrow(df_roi) > 0 && "SNP" %in% names(df_roi)) {
+    for(j in 1:nrow(df_roi)) {
+      mutacion <- as.character(df_roi$SNP[j])
+      posicion <- as.numeric(df_roi$START[j])
+      delta    <- as.numeric(df_roi$DELTA_FREQ[j])
+      
+      # Calcular en qué columna de la matriz cae esta posición
+      col_idx <- posicion - roi_start + 1
+      
+      if(grepl(">", mutacion) && col_idx > 0 && col_idx <= longitud) {
+        partes <- strsplit(mutacion, ">")[[1]]
+        ref <- partes[1]
+        alt <- partes[2]
+        
+        # El alelo alterno (mutación) toma el valor del delta
+        if(alt %in% rownames(mat_zoom)) mat_zoom[alt, col_idx] <- delta
+        # El alelo de referencia baja proporcionalmente
+        if(ref %in% rownames(mat_zoom)) mat_zoom[ref, col_idx] <- -delta
+      }
+    }
+  }
   
-  lista_logos[[i]] <- plot_logo
+  # 4. Dibujar el logo usando tu configuración original
+  # Ajustamos los saltos del eje X dinámicamente según el tamaño de la ROI
+  salto_x <- max(1, floor(longitud / 4)) 
+  
+  p_zoom <- ggseqlogo(mat_zoom, method = 'custom', seq_type = "dna", col_scheme = paleta_adn) +
+    theme_logo() +
+    theme(
+      panel.border = element_rect(color = "black", fill = NA, linewidth = 1),
+      plot.title = element_text(face = "bold", size = 11, hjust = 0.5),
+      axis.title.y = element_text(face = "bold", size = 10),
+      axis.title.x = element_text(face = "bold", size = 10)
+    ) +
+    labs(
+      title = sprintf("ROI %d (%d - %d)", i, roi_start, roi_end),
+      x = "Posición",
+      y = if(i==1) "Δ Frecuencia" else "" # Solo poner la etiqueta Y en el primer logo
+    ) +
+    geom_hline(yintercept = 0, color = "black", linewidth = 0.8) +
+    scale_x_continuous(breaks = seq(1, ncol(mat_zoom), by = salto_x), 
+                       labels = seq(roi_start, roi_end, by = salto_x))
+  
+  lista_logos[[i]] <- p_zoom
 }
 
 # ==========================================
-# 🧩 ENSAMBLAJE FINAL (PATCHWORK) Y GUARDADO
+# 🛠️ ENSAMBLAJE VECTORIAL Y GUARDADO
 # ==========================================
 cat("[R-Script] Ensamblando panel final...\n")
 
-# Patchwork es magia: 'plot_paisaje / plot_logos' pone uno arriba y los otros abajo
-if (length(lista_logos) == 1) {
-  panel_final <- plot_paisaje / lista_logos[[1]] + plot_layout(heights = c(1, 1))
-} else {
-  # Si hay múltiples logos, los pone en fila en la parte inferior usando 'wrap_plots'
-  panel_logos <- wrap_plots(lista_logos, nrow = 1)
-  panel_final <- plot_paisaje / panel_logos + plot_layout(heights = c(1, 1))
-}
+# Si hay múltiples logos, los pone uno al lado del otro
+panel_logos <- wrap_plots(lista_logos, nrow = 1)
+figura_final <- p_global / panel_logos + plot_layout(heights = c(1, 1.2))
 
-ruta_salida <- file.path(outdir, "Paisaje_y_Logos_Diferenciales.png")
-ggsave(ruta_salida, plot = panel_final, width = 12, height = 8, dpi = 300)
+ruta_salida_png <- file.path(outdir, "Figura_Paisaje_Genetico_Diferencial.png")
+ruta_salida_pdf <- file.path(outdir, "Figura_Paisaje_Genetico_Diferencial.pdf")
 
-cat(sprintf("[R-Script] ¡Éxito! Gráfico guardado en: %s\n\n", ruta_salida))
+ggsave(ruta_salida_png, plot = figura_final, width = 16, height = 10, dpi = 300)
+ggsave(ruta_salida_pdf, plot = figura_final, width = 16, height = 10, dpi = 300, device = pdf)
+
+cat(sprintf("[R-Script] ¡Éxito total! Figuras guardadas en: %s\n", outdir))
