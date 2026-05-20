@@ -324,7 +324,8 @@ def main():
         
         # El script de R sí necesita el FASTA para dibujar los logos de secuencia
         if args.ref:
-            comando_r = ["Rscript", "allele_landscape_logo.R", ruta_matriz, ruta_rois, args.ref, args.outdir]
+            # args.type al final para que R sepa cómo dibujar
+            comando_r = ["Rscript", "allele_landscape_logo.R", ruta_matriz, ruta_rois, args.ref, args.outdir, args.type]
             try:
                 print(f"    ⏳ Ejecutando Rscript...")
                 subprocess.run(comando_r, check=True, capture_output=True, text=True)
