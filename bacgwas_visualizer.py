@@ -310,7 +310,7 @@ def main():
         
         # --- ACTIVADOR DEL SPRINT 2 Y 3 ---
         # Fase 2: Mapeo y ROIs (Python extrae directo de la tabla)
-        mapear_y_agrupar_unitigs(df_sig, args.outdir)
+        mapear_y_agrupar_unitigs(df_sig, args)
         
         # Fase 3: Renderizado de Paisaje y Logos (R)
         print("\n>>> [6/6] Lanzando Motor Gráfico de R...")
