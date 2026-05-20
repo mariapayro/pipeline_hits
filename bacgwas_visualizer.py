@@ -141,37 +141,71 @@ def generar_graficos(df_plot, args):
     plt.savefig(os.path.join(args.outdir, "Plot_Magnitud_Absoluta.png"), dpi=300, bbox_inches='tight')
     plt.close()
 
-
 # ==========================================
-# 🗺️ MÓDULO SPRINT 2: CLUSTERING (COBRANDO COORDENADAS PRE-MAPEADAS)
+# 🗺️ MÓDULO SPRINT 2: MAPEO INTELIGENTE (SNP vs UNITIG)
 # ==========================================
-def mapear_y_agrupar_unitigs(df_hits, outdir):
-    print("\n>>> [5/6] Iniciando Clustering de Coordenadas Pre-mapeadas...")
+def mapear_y_agrupar_unitigs(df_hits, args):
+    outdir = args.outdir
     
     # Verificar si las columnas START y END existen (usando auto-detección por si hay mayúsculas)
-    columnas = [c.upper() for c in df_hits.columns]
-    
-    if 'START' not in columnas or 'END' not in columnas:
-        print("    ⚠️ No se encontraron columnas START/END en el GWAS. No se pueden crear ROIs.")
-        return
+    if args.type == 'snp':
+        print("\n>>> [5/6] Iniciando Clustering (Modo SNP - Coordenadas pre-mapeadas)...")
+        columnas = [c.upper() for c in df_hits.columns]
+        if 'START' not in columnas or 'END' not in columnas:
+            print("    ⚠️ No se encontraron columnas START/END. No se pueden crear ROIs.")
+            return
 
-    # Estandarizar nombres temporalmente para manipularlos
-    df_hits = df_hits.copy()
-    df_hits.columns = [c.upper() for c in df_hits.columns]
-    
-    # Extraer las coordenadas y asegurar que sean números
-    df_hits['START'] = pd.to_numeric(df_hits['START'], errors='coerce')
-    df_hits['END'] = pd.to_numeric(df_hits['END'], errors='coerce')
-    df_map = df_hits.dropna(subset=['START', 'END']).copy()
-    
-    if df_map.empty:
-        print("    ⚠️ Las coordenadas estaban vacías. No se pueden crear ROIs.")
-        return
+        # Estandarizar nombres temporalmente para manipulación
+        df_map = df_hits.copy()
+        df_map.columns = [c.upper() for c in df_map.columns]
+        
+        # Extraer las coordenadas y asegurar que sean números
+        df_map['START'] = pd.to_numeric(df_map['START'], errors='coerce')
+        df_map['END'] = pd.to_numeric(df_map['END'], errors='coerce')
+        df_map = df_map.dropna(subset=['START', 'END'])
+        
+    else:
+        print("\n>>> [5/6] Iniciando Mapeo Bidireccional (Modo Unitig/K-mer)...")
+        if not args.ref:
+            print("    ❌ ERROR: Necesitas dar un --ref para mapear unitigs.")
+            return
+            
+        try:
+            ref_record = next(SeqIO.parse(args.ref, "fasta"))
+            ref_seq = str(ref_record.seq).upper()
+            print(f"    ✔️ Referencia cargada: {ref_record.id} ({len(ref_seq)} pb)")
+        except Exception as e:
+            print(f"    ❌ ERROR leyendo FASTA: {e}")
+            return
+            
+        mapeados = []
+        for _, row in df_hits.iterrows():
+            seq_real = row.get('secuencia_real', '')
+            if not seq_real: continue
+            
+            # Buscar Forward
+            pos = ref_seq.find(seq_real)
+            
+            # Buscar Reverse
+            if pos == -1:
+                seq_real_rc = str(Seq(seq_real).reverse_complement())
+                pos = ref_seq.find(seq_real_rc)
+                
+            if pos != -1:
+                # Guardamos una copia de la fila pero con START/END reales
+                fila_mapeada = row.copy()
+                fila_mapeada['START'] = pos + 1
+                fila_mapeada['END'] = pos + len(seq_real)
+                mapeados.append(fila_mapeada)
+                
+        df_map = pd.DataFrame(mapeados)
+        if df_map.empty:
+            print("    ⚠️ Ningún unitig mapeó en la referencia.")
+            return
+        print(f"    ✔️ {len(df_map)}/{len(df_hits)} unitigs mapeados textualmente.")
 
-    print(f"    ✔️ Extrayendo {len(df_map)} coordenadas listas...")
-
-    # Clustering (Fusión de Intervalos superpuestos)
-    print("    ⏳ Agrupando hits encimados en Regiones de Interés (ROIs)...")
+    # CLUSTERING (Para ambos modos)
+    print("    ⏳ Agrupando hits en Regiones de Interés (ROIs)...")
     df_map = df_map.sort_values('START').reset_index(drop=True)
     
     rois = []
@@ -181,8 +215,9 @@ def mapear_y_agrupar_unitigs(df_hits, outdir):
         if current_roi is None:
             current_roi = {'start': row['START'], 'end': row['END'], 'hits_contenidos': 1}
         else:
-            # Si el inicio de este unitig cae "dentro" o "pegado" al anterior (margen de 5 bases)
-            if row['START'] <= current_roi['end'] + 5:
+            # Usamos 50 bases de margen para fusionar hotspots (número editable)
+            # por si el inicio de este unitig cae "dentro", "pegado" o cercano al anterior
+            if row['START'] <= current_roi['end'] + 50:
                 current_roi['end'] = max(current_roi['end'], row['END'])
                 current_roi['hits_contenidos'] += 1
             else:
@@ -194,9 +229,10 @@ def mapear_y_agrupar_unitigs(df_hits, outdir):
     df_rois = pd.DataFrame(rois)
     df_rois.index = [f"ROI_{i+1}" for i in range(len(df_rois))]
     df_rois.index.name = "ID_Region"
+    df_rois.to_csv(os.path.join(outdir, "ROIs_para_R.csv"))
     
-    ruta_rois = os.path.join(outdir, "ROIs_para_R.csv")
-    df_rois.to_csv(ruta_rois)
+    # Exportamos la matriz con las coordenadas corregidas para que R la use
+    df_map.to_csv(os.path.join(outdir, "GWAS_Matriz_Integrada.csv"), index=False)
     print(f"    ✨ Clustering exitoso: Se crearon {len(df_rois)} Regiones de Interés.")
     
     print(f"    📄 Archivo puente para R listo: {ruta_rois}")
