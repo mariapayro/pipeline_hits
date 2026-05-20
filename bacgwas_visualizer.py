@@ -76,10 +76,12 @@ def process_vcf(vcf_file, casos_ids, controles_ids):
                     elif sample in controles_ids: controles_indices.append(idx + 9)
                 print(f"    ✔️ Columnas VCF emparejadas con éxito.")
                 continue
-            
+          
             parts = line.strip().split('\t')
-            var_id = f"{parts[0]}_{parts[1]}"  # Forzamos a usar Cromosoma_Posición en lugar de la secuencia para hacer match con Pyseer
-            if var_id == '.': var_id = f"{parts[0]}_{parts[1]}" 
+            # Forzamos el ID a Cromosoma_Posición para hacer match con Pyseer
+            var_id = f"{parts[0]}_{parts[1]}" 
+            # Rescatamos la secuencia real de la columna 3 del vcf
+            secuencia_real = parts[2] if parts[2] != '.' else ""
             
             conteo_casos = sum(1 for i in casos_indices if '1' in parts[i].split(':')[0])
             conteo_controles = sum(1 for i in controles_indices if '1' in parts[i].split(':')[0])
@@ -89,12 +91,13 @@ def process_vcf(vcf_file, casos_ids, controles_ids):
             
             resultados.append({
                 'variant': var_id,
+                'secuencia_real': secuencia_real, # <--- Se guarda en la tabla final
                 'freq_casos': freq_case,
                 'freq_controles': freq_control,
                 'delta_freq': freq_case - freq_control,
                 'abs_delta_freq': abs(freq_case - freq_control)
-            })
-            
+            }) 
+           
     return pd.DataFrame(resultados)
     
     
