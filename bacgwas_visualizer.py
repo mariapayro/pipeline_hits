@@ -227,15 +227,20 @@ def mapear_y_agrupar_unitigs(df_hits, args):
     if current_roi: rois.append(current_roi)
         
     df_rois = pd.DataFrame(rois)
+    
     df_rois.index = [f"ROI_{i+1}" for i in range(len(df_rois))]
     df_rois.index.name = "ID_Region"
-    df_rois.to_csv(os.path.join(outdir, "ROIs_para_R.csv"))
+    
+    # Declaramos la ruta antes de guardar
+    ruta_rois = os.path.join(outdir, "ROIs_para_R.csv")
+    df_rois.to_csv(ruta_rois)
     
     # Exportamos la matriz con las coordenadas corregidas para que R la use
     df_map.to_csv(os.path.join(outdir, "GWAS_Matriz_Integrada.csv"), index=False)
-    print(f"    ✨ Clustering exitoso: Se crearon {len(df_rois)} Regiones de Interés.")
     
+    print(f"    ✨ Clustering exitoso: Se crearon {len(df_rois)} Regiones de Interés.")
     print(f"    📄 Archivo puente para R listo: {ruta_rois}")
+    
 
 def main():
     args = parse_arguments()
